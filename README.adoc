@@ -1,0 +1,127 @@
+How to build and run:
+
+```
+$ mvn clean install
+$ java -jar target/graal-test-0.0.1-SNAPSHOT.jar
+```
+
+prints the Google homepage.  The native image works too:
+
+```
+$ native-image --enable-url-protocols=http -H:IncludeResources='META-INF/services/.*' \
+  -H:Name=target/demo -H:ReflectionConfigurationFiles=`echo graal/*.json | tr ' ' ,` \
+  --report-unsupported-elements-at-runtime --allow-incomplete-classpath \
+  -H:+ReportUnsupportedElementsAtRuntime -cp target/graal-test-0.0.1-SNAPSHOT.jar Main
+$ ./target/main
+```
+
+== Issues
+
+=== HTTPS
+
+You can't use HTTPS in the client. Switch the URL to start "https:" and enable that protocol in the build (instead of http), and this happens at runtime:
+
+```
+$ ./target/demo 
+WARNING: The sunec native library, required by the SunEC provider, could not be loaded. This library is usually shipped as part of the JDK and can be found under <JAVA_HOME>/jre/lib/<platform>/libsunec.so. It is loaded at run time via System.loadLibrary("sunec"), the first time services from SunEC are accessed. To use this provider's services the java.library.path system property needs to be set accordingly to point to a location that contains libsunec.so. Note that if java.library.path is not set it defaults to the current working directory.
+Exception in thread "main" java.lang.UnsatisfiedLinkError: sun.security.ec.ECDSASignature.verifySignedDigest([B[B[B[B)Z [symbol: Java_sun_security_ec_ECDSASignature_verifySignedDigest or Java_sun_security_ec_ECDSASignature_verifySignedDigest___3B_3B_3B_3B]
+	at com.oracle.svm.jni.access.JNINativeLinkage.getOrFindEntryPoint(JNINativeLinkage.java:145)
+	at com.oracle.svm.jni.JNIGeneratedMethodSupport.nativeCallAddress(JNIGeneratedMethodSupport.java:54)
+	at sun.security.ec.ECDSASignature.verifySignedDigest(ECDSASignature.java)
+	at sun.security.ec.ECDSASignature.engineVerify(ECDSASignature.java:321)
+	at java.security.Signature$Delegate.engineVerify(Signature.java:1222)
+	at java.security.Signature.verify(Signature.java:655)
+	at sun.security.ssl.HandshakeMessage$ECDH_ServerKeyExchange.<init>(HandshakeMessage.java:1120)
+	at sun.security.ssl.ClientHandshaker.processMessage(ClientHandshaker.java:300)
+	at sun.security.ssl.Handshaker.processLoop(Handshaker.java:1037)
+	at sun.security.ssl.Handshaker.process_record(Handshaker.java:965)
+	at sun.security.ssl.SSLSocketImpl.readRecord(SSLSocketImpl.java:1064)
+	at sun.security.ssl.SSLSocketImpl.performInitialHandshake(SSLSocketImpl.java:1367)
+	at sun.security.ssl.SSLSocketImpl.startHandshake(SSLSocketImpl.java:1395)
+	at sun.security.ssl.SSLSocketImpl.startHandshake(SSLSocketImpl.java:1379)
+	at sun.net.www.protocol.https.HttpsClient.afterConnect(HttpsClient.java:559)
+	at sun.net.www.protocol.https.AbstractDelegateHttpsURLConnection.connect(AbstractDelegateHttpsURLConnection.java:185)
+	at sun.net.www.protocol.https.HttpsURLConnectionImpl.connect(HttpsURLConnectionImpl.java:162)
+	at org.springframework.http.client.SimpleBufferingClientHttpRequest.executeInternal(SimpleBufferingClientHttpRequest.java:76)
+	at org.springframework.http.client.AbstractBufferingClientHttpRequest.executeInternal(AbstractBufferingClientHttpRequest.java:48)
+	at org.springframework.http.client.AbstractClientHttpRequest.execute(AbstractClientHttpRequest.java:53)
+	at org.springframework.web.client.RestTemplate.doExecute(RestTemplate.java:734)
+	at org.springframework.web.client.RestTemplate.execute(RestTemplate.java:669)
+	at org.springframework.web.client.RestTemplate.getForObject(RestTemplate.java:310)
+	at Main.run(Main.java:11)
+	at Main.main(Main.java:6)
+```
+
+=== Rome
+
+Remove the rome dependency
+
+```
+		<dependency>
+			<groupId>com.rometools</groupId>
+			<artifactId>rome</artifactId>
+			<version>1.6.0</version>
+		</dependency>
+```
+
+and the build barfs, despite using `--allow-incomplete-classpath`:
+
+```
+...
+[target/demo:8907]     analysis:   1,234.54 ms
+Fatal error: java.lang.TypeNotPresentException: Type com.rometools.rome.feed.WireFeed not present
+	at sun.reflect.generics.factory.CoreReflectionFactory.makeNamedType(CoreReflectionFactory.java:117)
+	at sun.reflect.generics.visitor.Reifier.visitClassTypeSignature(Reifier.java:125)
+	at sun.reflect.generics.tree.ClassTypeSignature.accept(ClassTypeSignature.java:49)
+	at sun.reflect.generics.reflectiveObjects.TypeVariableImpl.getBounds(TypeVariableImpl.java:144)
+	at com.oracle.svm.core.hub.TypeVariableBoundsComputer.compute(SunReflectTypeSubstitutions.java:139)
+	at com.oracle.svm.hosted.substitute.ComputedValueField.readValue(ComputedValueField.java:253)
+...Caused by: java.lang.ClassNotFoundException: com.rometools.rome.feed.WireFeed
+
+	at java.net.URLClassLoader.findClass(URLClassLoader.java:382)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:424)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:357)
+	at java.lang.Class.forName0(Native Method)
+	at java.lang.Class.forName(Class.java:348)
+	at sun.reflect.generics.factory.CoreReflectionFactory.makeNamedType(CoreReflectionFactory.java:114)
+	... 23 more
+Error: Processing image build request failed
+```
+
+=== XML
+
+The app isn't using XML, but it barfs if you don't declare the XML `TransformerFactory` in the Graal JSON:
+
+```
+[
+  {
+    "name": "com.sun.org.apache.xalan.internal.xsltc.trax.TransformerFactoryImpl",
+    "methods": [
+      { "name": "<init>", "parameterTypes": [] }
+    ]
+  }
+]
+```
+
+Remove that file, and this is what happens at runtime:
+
+```
+$ ./target/demo 
+Exception in thread "main" javax.xml.transform.TransformerFactoryConfigurationError: Provider com.sun.org.apache.xalan.internal.xsltc.trax.TransformerFactoryImpl not found
+	at javax.xml.transform.FactoryFinder.newInstance(FactoryFinder.java:181)
+	at javax.xml.transform.FactoryFinder.find(FactoryFinder.java:261)
+	at javax.xml.transform.TransformerFactory.newInstance(TransformerFactory.java:106)
+	at org.springframework.http.converter.xml.AbstractXmlHttpMessageConverter.<init>(AbstractXmlHttpMessageConverter.java:51)
+	at org.springframework.http.converter.xml.AbstractJaxb2HttpMessageConverter.<init>(AbstractJaxb2HttpMessageConverter.java:38)
+	at org.springframework.http.converter.xml.Jaxb2RootElementHttpMessageConverter.<init>(Jaxb2RootElementHttpMessageConverter.java:63)
+	at org.springframework.http.converter.support.AllEncompassingFormHttpMessageConverter.<init>(AllEncompassingFormHttpMessageConverter.java:72)
+	at org.springframework.web.client.RestTemplate.<init>(RestTemplate.java:148)
+	at Main.run(Main.java:10)
+	at Main.main(Main.java:6)
+Caused by: java.lang.ClassNotFoundException: com.sun.org.apache.xalan.internal.xsltc.trax.TransformerFactoryImpl
+	at com.oracle.svm.core.hub.ClassForNameSupport.forName(ClassForNameSupport.java:51)
+	at java.lang.Class.forName(DynamicHub.java:1026)
+	at javax.xml.transform.FactoryFinder.getProviderClass(FactoryFinder.java:127)
+	at javax.xml.transform.FactoryFinder.newInstance(FactoryFinder.java:168)
+	... 9 more
+```
